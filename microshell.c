@@ -1,11 +1,15 @@
 
+// gcc -g -Wall -pthread microshell.c -lpthread -o main && ./main
+
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <sys/types.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include <signal.h>
+#include <semaphore.h>
+#include <pthread.h>
 
 #define RED     "\x1b[31m"
 #define GREEN   "\x1b[32m"
@@ -15,12 +19,15 @@
 #define CYAN    "\x1b[36m"
 #define RESET   "\x1b[0m"
 
+void *thread_function(void *arg);
 int sh_cd(char **args);
 int sh_help(char **args);
 int sh_exit(char **args);
 int sh_exec(char **args);
 
 int is_wait = 1; 
+sem_t bin_sem;
+char *line = ""; 
 
 char *builtin_str[] = {
     "cd",
@@ -40,8 +47,7 @@ int sh_num_builtins() {
     return sizeof(builtin_str) / sizeof(char *);
 }
 
-int sh_cd(char **args)
-{
+int sh_cd(char **args){
     if (args[1] == NULL) {
         fprintf(stderr, "sh: expected argument to \"cd\"\n");
     } else {
@@ -52,8 +58,7 @@ int sh_cd(char **args)
     return 1;
 }
 
-int sh_help(char **args)
-{
+int sh_help(char **args){
     int i;
     printf("Type program names and arguments, and hit enter.\n");
     printf("The following are built in:\n");
@@ -66,9 +71,21 @@ int sh_help(char **args)
     return 1;
 }
 
-int sh_exit(char **args)
-{
+int sh_exit(char **args){
     return 0;
+}
+
+#define sh_RESERVED_CHAR "|"
+void *thread_function(void *arg) {
+    while ((char *)arg) {
+        sem_wait(&bin_sem);
+        if(strlen((char *)arg) > 0) {
+            printf("thread_function is running. Argument was %s\n", (char *)arg);
+        }
+        sem_post(&bin_sem);
+        sleep(1); 
+    }
+    pthread_exit(NULL);
 }
 
 int sh_launch(char **args) {
@@ -106,8 +123,7 @@ int sh_exec(char **args) {
     return 0;
 }
 
-int sh_execute(char **args)
-{
+int sh_execute(char **args){
     int i;
 
     if (args[0] == NULL) {
@@ -162,10 +178,7 @@ char *sh_read_line(void) {
 
 #define sh_TOK_BUFSIZE 64
 #define sh_TOK_DELIM " \t\r\n\a"
-
-
-char **sh_split_line(char *line)
-{
+char **sh_split_line(char *line){
     int bufsize = sh_TOK_BUFSIZE, position = 0;
     char **tokens = malloc(bufsize * sizeof(char*));
     char *token, **tokens_backup;
@@ -177,6 +190,11 @@ char **sh_split_line(char *line)
 
     token = strtok(line, sh_TOK_DELIM);
     while (token != NULL) {
+        if(*token == '&') { 
+            is_wait = 0; 
+            return tokens; 
+        }
+
         tokens[position] = token;
         position++;
 
@@ -196,15 +214,6 @@ char **sh_split_line(char *line)
     return tokens;
 }
 
-void sh_get_out() { 
-    char c; 
-    printf("\nAre you to exit ? (y/n): ");
-    scanf("%c", &c);
-    if ( c == 'y' || c == 'Y' ) { 
-        exit(EXIT_SUCCESS);
-    } 
-}
-
 void sh_type_prompt(void){
     int bufsize = sh_RL_BUFSIZE;
     char *buffer = malloc(sizeof(char) * bufsize);
@@ -216,36 +225,53 @@ void sh_type_prompt(void){
     printf(CYAN "%s:" GREEN " %s:" RESET "$  ", buffer,cwd);
 }
 
+void sh_loop(void) {
+    char **args;
+    int status;
+    
+    do {
+        sh_type_prompt();
+
+        sem_post(&bin_sem);
+        line = sh_read_line();
+        sem_wait(&bin_sem);
+
+        args = sh_split_line(line);
+        status = sh_execute(args);
+        free(line);
+        free(args);
+    } while (status);
+}
+
+void sh_get_out() { 
+    char c; 
+    printf("\nAre you to exit ? (y/n): ");
+    scanf("%c", &c);
+    if ( c == 'y' || c == 'Y' ) { 
+        exit(EXIT_SUCCESS);
+    }  
+}
+
 void sh_signal(void) { 
     struct sigaction act;
     act.sa_handler = sh_get_out;
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0;
     sigaction(SIGINT, &act, 0);                             //Ctrl+C
-    sigaction(SIGTSTP, &act, 0);                            //Ctrl+Z
 }
 
-void sh_loop(void) {
-    char *line;
-    char **args;
-    int status;
-    
-    do {
 
-        sh_type_prompt();
-        line = sh_read_line();
-        args = sh_split_line(line);
-        status = sh_execute(args);
+int main(int argc, char **argv) {
+    // pthread_t a_thread;
+    // void *thread_result;
+    // sem_init(&bin_sem, 0, 0);
+    // pthread_create(&a_thread, NULL, thread_function, (void *)line);
 
-        free(line);
-        free(args);
-    } while (status);
-}
-
-int main(int argc, char **argv)
-{
-    sh_signal(); 
+    sh_signal();
     sh_loop();
+
+    // pthread_join(a_thread, &thread_result);
+    // sem_destroy(&bin_sem);
     return EXIT_SUCCESS;
 }
 
