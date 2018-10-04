@@ -18,17 +18,22 @@
 int sh_cd(char **args);
 int sh_help(char **args);
 int sh_exit(char **args);
+int sh_exec(char **args);
+
+int is_wait = 1; 
 
 char *builtin_str[] = {
     "cd",
     "help",
-    "exit"
+    "exit",
+    "exec"
 };
 
 int (*builtin_func[]) (char **) = {
     &sh_cd,
     &sh_help,
-    &sh_exit
+    &sh_exit,
+    &sh_exec
 };
 
 int sh_num_builtins() {
@@ -74,7 +79,7 @@ int sh_launch(char **args) {
     if (pid == 0) {
         // Child process
         if (execvp(args[0], args) == -1) {
-        perror("sh");
+            perror("sh");
         }
         exit(EXIT_FAILURE);
     } else if (pid < 0) {
@@ -83,10 +88,22 @@ int sh_launch(char **args) {
     } else {
         // Parent process
         do {
-            waitpid(pid, &status, WUNTRACED);
+            if(is_wait) { 
+                waitpid(pid, &status, WUNTRACED);
+            }
         } while (!WIFEXITED(status) && !WIFSIGNALED(status));
     }
     return 1;
+}
+
+int sh_exec(char **args) { 
+    if (args[1] == NULL) {
+        fprintf(stderr, "sh: expected argument to \"exec\"\n");
+    } else {
+        args++; 
+        sh_launch(args); 
+    }
+    return 0;
 }
 
 int sh_execute(char **args)
@@ -132,7 +149,6 @@ char *sh_read_line(void) {
         }
         position++;
 
-        // If we have exceeded the buffer, reallocate.
         if (position >= bufsize) {
             bufsize += sh_RL_BUFSIZE;
             buffer = realloc(buffer, bufsize);
@@ -213,7 +229,7 @@ void sh_loop(void) {
     char *line;
     char **args;
     int status;
-
+    
     do {
 
         sh_type_prompt();
